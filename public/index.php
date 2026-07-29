@@ -3,15 +3,75 @@ declare(strict_types=1);
 
 date_default_timezone_set('Europe/Vilnius');
 
-function environment(string $name): string
+function appRootPath(): string
 {
+    return dirname(__DIR__);
+}
+
+function loadDotenv(string $path): array
+{
+    $data = [];
+    if (!is_file($path) || !is_readable($path)) {
+        return $data;
+    }
+
+    $contents = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($contents === false) {
+        return $data;
+    }
+
+    foreach ($contents as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) {
+            continue;
+        }
+
+        if (str_starts_with($line, 'export ')) {
+            $line = trim(substr($line, 7));
+        }
+
+        [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
+        $key = trim($key);
+        $value = trim($value);
+
+        if ($key === '') {
+            continue;
+        }
+
+        if (str_starts_with($value, '"') && str_ends_with($value, '"')
+            || str_starts_with($value, "'") && str_ends_with($value, "'")) {
+            $value = substr($value, 1, -1);
+        }
+
+        $data[$key] = $value;
+    }
+
+    return $data;
+}
+
+function environment(string $name, ?string $default = null): string
+{
+    static $dotenv;
+
+    if ($dotenv === null) {
+        $dotenv = loadDotenv(appRootPath() . '/.env');
+    }
+
     $value = getenv($name);
-    return $value === false ? '' : $value;
+    if ($value !== false && $value !== '') {
+        return $value;
+    }
+
+    if (isset($dotenv[$name]) && $dotenv[$name] !== '') {
+        return $dotenv[$name];
+    }
+
+    return $default ?? '';
 }
 
 function storagePath(): string
 {
-    return dirname(__DIR__) . '/storage/last-db-success.json';
+    return appRootPath() . '/storage/last-db-success.json';
 }
 
 function lastSuccessfulConnection(): ?string
@@ -42,13 +102,19 @@ $databaseError = null;
 $lastSuccess = lastSuccessfulConnection();
 
 try {
+    $dbHost = environment('DB_HOST', environment('POSTGRES_HOST', '127.0.0.1'));
+    $dbPort = environment('DB_PORT', environment('POSTGRES_PORT', '5432'));
+    $dbName = environment('DB_NAME', environment('POSTGRES_DB', 'web_db_play'));
+    $dbUser = environment('DB_USER', environment('POSTGRES_USER', 'web_app'));
+    $dbPassword = environment('DB_PASSWORD', environment('POSTGRES_PASSWORD', ''));
+
     $dsn = sprintf(
         'pgsql:host=%s;port=%s;dbname=%s',
-        environment('DB_HOST'),
-        environment('DB_PORT'),
-        environment('DB_NAME')
+        $dbHost,
+        $dbPort,
+        $dbName
     );
-    $pdo = new PDO($dsn, environment('DB_USER'), environment('DB_PASSWORD'), [
+    $pdo = new PDO($dsn, $dbUser, $dbPassword, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
