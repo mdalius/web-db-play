@@ -74,6 +74,20 @@ function storagePath(): string
     return appRootPath() . '/storage/last-db-success.json';
 }
 
+function quotePgIdentifier(string $identifier): string
+{
+    $identifier = trim($identifier);
+    if ($identifier === '') {
+        throw new InvalidArgumentException('PostgreSQL schema name cannot be empty.');
+    }
+
+    if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $identifier)) {
+        return $identifier;
+    }
+
+    return '"' . str_replace('"', '""', $identifier) . '"';
+}
+
 function lastSuccessfulConnection(): ?string
 {
     $contents = @file_get_contents(storagePath());
@@ -105,9 +119,11 @@ try {
     $dbHost = environment('DB_HOST', environment('POSTGRES_HOST', '127.0.0.1'));
     $dbPort = environment('DB_PORT', environment('POSTGRES_PORT', '5432'));
     $dbName = environment('DB_NAME', environment('POSTGRES_DB', 'web_db_play'));
+    $dbSchema = environment('DB_SCHEMA', environment('POSTGRES_SCHEMA', 'public'));
     $dbUser = environment('DB_USER', environment('POSTGRES_USER', 'web_app'));
     $dbPassword = environment('DB_PASSWORD', environment('POSTGRES_PASSWORD', ''));
 
+    $quotedSchema = quotePgIdentifier($dbSchema);
     $dsn = sprintf(
         'pgsql:host=%s;port=%s;dbname=%s',
         $dbHost,
@@ -125,16 +141,16 @@ try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
     $upsert = $pdo->prepare(
-        'INSERT INTO request_clients (client_key) VALUES (:client_key)\n'
+        'INSERT INTO ' . $quotedSchema . '.request_clients (client_key) VALUES (:client_key)\n'
         . 'ON CONFLICT (client_key) DO UPDATE\n'
-        . 'SET last_request_at = NOW(), request_count = request_clients.request_count + 1\n'
+        . 'SET last_request_at = NOW(), request_count = ' . $quotedSchema . '.request_clients.request_count + 1\n'
         . 'RETURNING id'
     );
     $upsert->execute(['client_key' => $clientKey]);
     $clientId = $upsert->fetchColumn();
 
     $log = $pdo->prepare(
-        'INSERT INTO request_log (client_id, request_method, request_path, remote_address, web_server)\n'
+        'INSERT INTO ' . $quotedSchema . '.request_log (client_id, request_method, request_path, remote_address, web_server)\n'
         . 'VALUES (:client_id, :method, :path, :remote_address, :web_server)'
     );
     $log->execute([
