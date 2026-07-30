@@ -140,19 +140,26 @@ try {
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-    $upsert = $pdo->prepare(
-        'INSERT INTO ' . $quotedSchema . '.request_clients (client_key) VALUES (:client_key)\n'
+    $upsertSql = sprintf(
+        "INSERT INTO %s.request_clients (client_key) VALUES (:client_key)\n"
         . "ON CONFLICT (client_key) DO UPDATE\n"
-        . "SET last_request_at = NOW(), request_count = " . $quotedSchema . ".request_clients.request_count + 1\n"
-        . "RETURNING id"
+        . "SET last_request_at = NOW(), request_count = %s.request_clients.request_count + 1\n"
+        . "RETURNING id",
+        $quotedSchema,
+        $quotedSchema
     );
+
+    $upsert = $pdo->prepare($upsertSql);
     $upsert->execute(['client_key' => $clientKey]);
     $clientId = $upsert->fetchColumn();
 
-    $log = $pdo->prepare(
-        'INSERT INTO ' . $quotedSchema . '.request_log (client_id, request_method, request_path, remote_address, web_server)\n'
-        . "VALUES (:client_id, :method, :path, :remote_address, :web_server)"
+    $logSql = sprintf(
+        "INSERT INTO %s.request_log (client_id, request_method, request_path, remote_address, web_server)\n"
+        . "VALUES (:client_id, :method, :path, :remote_address, :web_server)",
+        $quotedSchema
     );
+
+    $log = $pdo->prepare($logSql);
     $log->execute([
         'client_id' => $clientId,
         'method' => $method,
