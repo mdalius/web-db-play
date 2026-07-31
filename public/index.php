@@ -106,10 +106,16 @@ function lastSuccessfulDbInsert(?string &$storageError = null): ?array
     return [
         'at' => (string) $data['at'],
         'node' => isset($data['node']) ? (string) $data['node'] : null,
+        'hostname' => isset($data['hostname']) ? (string) $data['hostname'] : null,
     ];
 }
 
-function rememberSuccessfulDbInsert(string $time, string $node, ?string &$storageError = null): bool
+function rememberSuccessfulDbInsert(
+    string $time,
+    string $node,
+    string $hostname,
+    ?string &$storageError = null
+): bool
 {
     $storageError = null;
     $directory = dirname(storagePath());
@@ -121,7 +127,11 @@ function rememberSuccessfulDbInsert(string $time, string $node, ?string &$storag
     }
 
     try {
-        $contents = json_encode(['at' => $time, 'node' => $node], JSON_THROW_ON_ERROR);
+        $contents = json_encode([
+            'at' => $time,
+            'node' => $node,
+            'hostname' => $hostname,
+        ], JSON_THROW_ON_ERROR);
     } catch (JsonException $error) {
         $storageError = $error->getMessage();
         return false;
@@ -183,10 +193,11 @@ try {
     $clientId = $upsert->fetchColumn();
 
     $logSql = sprintf(
-        "INSERT INTO %s.request_log (client_id, request_method, request_path, remote_address, web_server, db_node)\n"
+        "INSERT INTO %s.request_log (client_id, request_method, request_path, remote_address, web_server, db_node, db_hostname)\n"
         . "VALUES (:client_id, :method, :path, :remote_address, :web_server,\n"
-        . "COALESCE(NULLIF(current_setting('app.node_name', true), ''), inet_server_addr()::text, 'unknown'))\n"
-        . "RETURNING requested_at, db_node",
+        . "COALESCE(NULLIF(current_setting('app.node_name', true), ''), inet_server_addr()::text, 'unknown'),\n"
+        . "COALESCE(NULLIF(current_setting('app.node_hostname', true), ''), inet_server_addr()::text, 'unknown'))\n"
+        . "RETURNING requested_at, db_node, db_hostname",
         $quotedSchema
     );
 
@@ -200,7 +211,8 @@ try {
     ]);
 
     $dbInsert = $log->fetch();
-    if (!is_array($dbInsert) || !isset($dbInsert['requested_at'], $dbInsert['db_node'])) {
+    if (!is_array($dbInsert)
+        || !isset($dbInsert['requested_at'], $dbInsert['db_node'], $dbInsert['db_hostname'])) {
         throw new RuntimeException('DB negrąžino paskutinio įrašo informacijos.');
     }
 
@@ -208,8 +220,14 @@ try {
     $lastDbInsert = [
         'at' => (string) $dbInsert['requested_at'],
         'node' => (string) $dbInsert['db_node'],
+        'hostname' => (string) $dbInsert['db_hostname'],
     ];
-    rememberSuccessfulDbInsert($lastDbInsert['at'], $lastDbInsert['node'], $storageError);
+    rememberSuccessfulDbInsert(
+        $lastDbInsert['at'],
+        $lastDbInsert['node'],
+        $lastDbInsert['hostname'],
+        $storageError
+    );
     $databaseStatus = 'OK';
 } catch (Throwable $error) {
     if (isset($pdo) && $pdo->inTransaction()) {
@@ -259,6 +277,8 @@ try {
                 <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
                 <dt>DB node</dt>
                 <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt>PostgreSQL server hostname</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
             </dl>
             <p class="hint">Prisijungta ir užklausa įrašyta į DB.</p>
         <?php else: ?>
@@ -268,6 +288,8 @@ try {
                 <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
                 <dt>DB node</dt>
                 <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt>PostgreSQL server hostname</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
                 <dt>Klaida</dt>
                 <dd class="error"><?= htmlspecialchars($databaseError ?? 'Nežinoma klaida', ENT_QUOTES, 'UTF-8') ?></dd>
             </dl>
