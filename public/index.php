@@ -88,10 +88,13 @@ function quotePgIdentifier(string $identifier): string
     return '"' . str_replace('"', '""', $identifier) . '"';
 }
 
-function lastSuccessfulConnection(): ?string
+function lastSuccessfulConnection(?string &$storageError = null): ?string
 {
+    $storageError = null;
     $contents = @file_get_contents(storagePath());
     if ($contents === false) {
+        $error = error_get_last();
+        $storageError = $error['message'] ?? 'Nepavyko atidaryti paskutinio DB prisijungimo failo.';
         return null;
     }
 
@@ -113,7 +116,8 @@ $now = new DateTimeImmutable('now');
 $webServer = gethostname() ?: php_uname('n');
 $databaseStatus = 'Nepavyko prisijungti';
 $databaseError = null;
-$lastSuccess = lastSuccessfulConnection();
+$storageError = null;
+$lastSuccess = lastSuccessfulConnection($storageError);
 
 try {
     $dbHost = environment('DB_HOST', environment('POSTGRES_HOST', '127.0.0.1'));
@@ -222,5 +226,13 @@ try {
             </dl>
         <?php endif; ?>
     </section>
+
+    <?php if ($storageError !== null): ?>
+        <section class="card">
+            <h2>Paskutinio prisijungimo failas</h2>
+            <p class="status error">✗ Nepavyko atidaryti `last-db-success.json`</p>
+            <p class="error"><?= htmlspecialchars($storageError, ENT_QUOTES, 'UTF-8') ?></p>
+        </section>
+    <?php endif; ?>
 </body>
 </html>
