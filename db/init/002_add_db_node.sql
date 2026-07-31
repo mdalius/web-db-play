@@ -1,0 +1,2 @@
+ALTER TABLE request_log
+    ADD COLUMN IF NOT EXISTS db_node TEXT NOT NULL DEFAULT 'unknown';

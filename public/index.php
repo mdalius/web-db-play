@@ -88,7 +88,7 @@ function quotePgIdentifier(string $identifier): string
     return '"' . str_replace('"', '""', $identifier) . '"';
 }
 
-function lastSuccessfulConnection(?string &$storageError = null): ?string
+function lastSuccessfulDbInsert(?string &$storageError = null): ?array
 {
     $storageError = null;
     $contents = @file_get_contents(storagePath());
@@ -99,17 +99,41 @@ function lastSuccessfulConnection(?string &$storageError = null): ?string
     }
 
     $data = json_decode($contents, true);
-    return is_array($data) && isset($data['at']) ? (string) $data['at'] : null;
-}
-
-function rememberSuccessfulConnection(string $time): void
-{
-    $directory = dirname(storagePath());
-    if (!is_dir($directory)) {
-        @mkdir($directory, 0775, true);
+    if (!is_array($data) || !isset($data['at'])) {
+        return null;
     }
 
-    @file_put_contents(storagePath(), json_encode(['at' => $time], JSON_THROW_ON_ERROR));
+    return [
+        'at' => (string) $data['at'],
+        'node' => isset($data['node']) ? (string) $data['node'] : null,
+    ];
+}
+
+function rememberSuccessfulDbInsert(string $time, string $node, ?string &$storageError = null): bool
+{
+    $storageError = null;
+    $directory = dirname(storagePath());
+    if (!is_dir($directory)) {
+        if (!@mkdir($directory, 0775, true) && !is_dir($directory)) {
+            $storageError = 'Nepavyko sukurti aplikacijos saugyklos katalogo.';
+            return false;
+        }
+    }
+
+    try {
+        $contents = json_encode(['at' => $time, 'node' => $node], JSON_THROW_ON_ERROR);
+    } catch (JsonException $error) {
+        $storageError = $error->getMessage();
+        return false;
+    }
+
+    if (@file_put_contents(storagePath(), $contents, LOCK_EX) === false) {
+        $error = error_get_last();
+        $storageError = $error['message'] ?? 'Nepavyko išsaugoti paskutinio DB įrašo informacijos.';
+        return false;
+    }
+
+    return true;
 }
 
 $now = new DateTimeImmutable('now');
@@ -117,7 +141,7 @@ $webServer = gethostname() ?: php_uname('n');
 $databaseStatus = 'Nepavyko prisijungti';
 $databaseError = null;
 $storageError = null;
-$lastSuccess = lastSuccessfulConnection($storageError);
+$lastDbInsert = lastSuccessfulDbInsert($storageError);
 
 try {
     $dbHost = environment('DB_HOST', environment('POSTGRES_HOST', '127.0.0.1'));
@@ -138,6 +162,7 @@ try {
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
+    $pdo->beginTransaction();
 
     $clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $clientKey = hash('sha256', $clientIp . '|' . ($_SERVER['HTTP_USER_AGENT'] ?? ''));
@@ -158,8 +183,10 @@ try {
     $clientId = $upsert->fetchColumn();
 
     $logSql = sprintf(
-        "INSERT INTO %s.request_log (client_id, request_method, request_path, remote_address, web_server)\n"
-        . "VALUES (:client_id, :method, :path, :remote_address, :web_server)",
+        "INSERT INTO %s.request_log (client_id, request_method, request_path, remote_address, web_server, db_node)\n"
+        . "VALUES (:client_id, :method, :path, :remote_address, :web_server,\n"
+        . "COALESCE(NULLIF(current_setting('app.node_name', true), ''), inet_server_addr()::text, 'unknown'))\n"
+        . "RETURNING requested_at, db_node",
         $quotedSchema
     );
 
@@ -172,10 +199,22 @@ try {
         'web_server' => $webServer,
     ]);
 
-    $lastSuccess = $now->format(DATE_ATOM);
-    rememberSuccessfulConnection($lastSuccess);
+    $dbInsert = $log->fetch();
+    if (!is_array($dbInsert) || !isset($dbInsert['requested_at'], $dbInsert['db_node'])) {
+        throw new RuntimeException('DB negrąžino paskutinio įrašo informacijos.');
+    }
+
+    $pdo->commit();
+    $lastDbInsert = [
+        'at' => (string) $dbInsert['requested_at'],
+        'node' => (string) $dbInsert['db_node'],
+    ];
+    rememberSuccessfulDbInsert($lastDbInsert['at'], $lastDbInsert['node'], $storageError);
     $databaseStatus = 'OK';
 } catch (Throwable $error) {
+    if (isset($pdo) && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     $databaseError = $error->getMessage();
 }
 ?>
@@ -215,12 +254,20 @@ try {
         <h2>PostgreSQL prisijungimas</h2>
         <?php if ($databaseStatus === 'OK'): ?>
             <p class="status ok">✓ OK</p>
+            <dl>
+                <dt>Paskutinis įrašas į DB</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt>DB node</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
+            </dl>
             <p class="hint">Prisijungta ir užklausa įrašyta į DB.</p>
         <?php else: ?>
             <p class="status error">✗ Nepavyko prisijungti</p>
             <dl>
-                <dt>Paskutinis sėkmingas prisijungimas</dt>
-                <dd><?= htmlspecialchars($lastSuccess ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt>Paskutinis įrašas į DB</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt>DB node</dt>
+                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
                 <dt>Klaida</dt>
                 <dd class="error"><?= htmlspecialchars($databaseError ?? 'Nežinoma klaida', ENT_QUOTES, 'UTF-8') ?></dd>
             </dl>
