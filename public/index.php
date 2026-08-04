@@ -3,6 +3,67 @@ declare(strict_types=1);
 
 date_default_timezone_set('Europe/Vilnius');
 
+$language = $_COOKIE['site_language'] ?? 'lt';
+if (!in_array($language, ['lt', 'en'], true)) {
+    $language = 'lt';
+}
+
+function translate(string $key): string
+{
+    global $language;
+
+    static $translations = [
+        'lt' => [
+            'page_title' => 'PostgreSQL ryšio testas',
+            'language' => 'Kalba',
+            'web_request' => 'WEB užklausa',
+            'server_host' => "Serveris / host'as",
+            'current_datetime' => 'Dabartinė data ir laikas',
+            'postgres_connection' => 'PostgreSQL prisijungimas',
+            'last_db_entry' => 'Paskutinis įrašas į DB',
+            'no_data' => 'Nėra duomenų',
+            'db_node' => 'DB node',
+            'not_specified' => 'Nenurodyta',
+            'postgres_hostname' => 'PostgreSQL server hostname',
+            'connected_and_logged' => 'Prisijungta ir užklausa įrašyta į DB.',
+            'connection_failed' => 'Nepavyko prisijungti',
+            'error' => 'Klaida',
+            'last_connection_file' => 'Paskutinio prisijungimo failas',
+            'file_open_failed' => 'Nepavyko atidaryti `last-db-success.json`',
+            'unknown_error' => 'Nežinoma klaida',
+            'storage_directory_failed' => 'Nepavyko sukurti aplikacijos saugyklos katalogo.',
+            'storage_save_failed' => 'Nepavyko išsaugoti paskutinio DB įrašo informacijos.',
+            'schema_empty' => 'PostgreSQL schemos pavadinimas negali būti tuščias.',
+            'missing_db_result' => 'DB negrąžino paskutinio įrašo informacijos.',
+        ],
+        'en' => [
+            'page_title' => 'PostgreSQL connection test',
+            'language' => 'Language',
+            'web_request' => 'WEB request',
+            'server_host' => 'Server / host',
+            'current_datetime' => 'Current date and time',
+            'postgres_connection' => 'PostgreSQL connection',
+            'last_db_entry' => 'Last entry in the database',
+            'no_data' => 'No data',
+            'db_node' => 'DB node',
+            'not_specified' => 'Not specified',
+            'postgres_hostname' => 'PostgreSQL server hostname',
+            'connected_and_logged' => 'Connected and request logged in the database.',
+            'connection_failed' => 'Connection failed',
+            'error' => 'Error',
+            'last_connection_file' => 'Last connection file',
+            'file_open_failed' => 'Could not open `last-db-success.json`',
+            'unknown_error' => 'Unknown error',
+            'storage_directory_failed' => 'Could not create the application storage directory.',
+            'storage_save_failed' => 'Could not save the last database entry information.',
+            'schema_empty' => 'The PostgreSQL schema name cannot be empty.',
+            'missing_db_result' => 'The database did not return the last entry information.',
+        ],
+    ];
+
+    return $translations[$language][$key] ?? $translations['lt'][$key] ?? $key;
+}
+
 function appRootPath(): string
 {
     return dirname(__DIR__);
@@ -78,7 +139,7 @@ function quotePgIdentifier(string $identifier): string
 {
     $identifier = trim($identifier);
     if ($identifier === '') {
-        throw new InvalidArgumentException('PostgreSQL schema name cannot be empty.');
+        throw new InvalidArgumentException(translate('schema_empty'));
     }
 
     if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $identifier)) {
@@ -94,7 +155,7 @@ function lastSuccessfulDbInsert(?string &$storageError = null): ?array
     $contents = @file_get_contents(storagePath());
     if ($contents === false) {
         $error = error_get_last();
-        $storageError = $error['message'] ?? 'Nepavyko atidaryti paskutinio DB prisijungimo failo.';
+        $storageError = $error['message'] ?? translate('file_open_failed');
         return null;
     }
 
@@ -121,7 +182,7 @@ function rememberSuccessfulDbInsert(
     $directory = dirname(storagePath());
     if (!is_dir($directory)) {
         if (!@mkdir($directory, 0775, true) && !is_dir($directory)) {
-            $storageError = 'Nepavyko sukurti aplikacijos saugyklos katalogo.';
+            $storageError = translate('storage_directory_failed');
             return false;
         }
     }
@@ -139,7 +200,7 @@ function rememberSuccessfulDbInsert(
 
     if (@file_put_contents(storagePath(), $contents, LOCK_EX) === false) {
         $error = error_get_last();
-        $storageError = $error['message'] ?? 'Nepavyko išsaugoti paskutinio DB įrašo informacijos.';
+        $storageError = $error['message'] ?? translate('storage_save_failed');
         return false;
     }
 
@@ -148,7 +209,7 @@ function rememberSuccessfulDbInsert(
 
 $now = new DateTimeImmutable('now');
 $webServer = gethostname() ?: php_uname('n');
-$databaseStatus = 'Nepavyko prisijungti';
+$databaseConnected = false;
 $databaseError = null;
 $storageError = null;
 $lastDbInsert = lastSuccessfulDbInsert($storageError);
@@ -213,7 +274,7 @@ try {
     $dbInsert = $log->fetch();
     if (!is_array($dbInsert)
         || !isset($dbInsert['requested_at'], $dbInsert['db_node'], $dbInsert['db_hostname'])) {
-        throw new RuntimeException('DB negrąžino paskutinio įrašo informacijos.');
+        throw new RuntimeException(translate('missing_db_result'));
     }
 
     $pdo->commit();
@@ -228,7 +289,7 @@ try {
         $lastDbInsert['hostname'],
         $storageError
     );
-    $databaseStatus = 'OK';
+    $databaseConnected = true;
 } catch (Throwable $error) {
     if (isset($pdo) && $pdo->inTransaction()) {
         $pdo->rollBack();
@@ -237,15 +298,21 @@ try {
 }
 ?>
 <!doctype html>
-<html lang="lt">
+<html lang="<?= htmlspecialchars($language, ENT_QUOTES, 'UTF-8') ?>">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PostgreSQL ryšio testas</title>
+    <title><?= htmlspecialchars(translate('page_title'), ENT_QUOTES, 'UTF-8') ?></title>
     <style>
         :root { color-scheme: light; font-family: system-ui, sans-serif; }
         body { max-width: 760px; margin: 3rem auto; padding: 0 1rem; background: #f7f8fa; color: #17202a; }
-        h1 { margin-bottom: 1.5rem; }
+        .topbar { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; margin-bottom: 1.25rem; }
+        .language-label { color: #58606a; font-size: .9rem; }
+        .language-switcher { display: inline-flex; gap: .2rem; padding: .2rem; background: #e8ebef; border-radius: .5rem; }
+        .language-button { border: 0; border-radius: .3rem; padding: .35rem .65rem; background: transparent; color: #58606a; cursor: pointer; font: inherit; font-size: .85rem; font-weight: 700; }
+        .language-button:hover, .language-button:focus-visible { color: #17202a; }
+        .language-button.active { background: #fff; color: #17202a; box-shadow: 0 1px 2px #0000001a; }
+        h1 { margin: 0 0 1.5rem; }
         .card { padding: 1.4rem; margin: 1rem 0; background: #fff; border: 1px solid #dfe3e8; border-radius: .7rem; box-shadow: 0 1px 2px #0000000d; }
         .status { font-size: 1.35rem; font-weight: 700; }
         .ok { color: #147a36; }
@@ -256,52 +323,94 @@ try {
     </style>
 </head>
 <body>
-    <h1>PostgreSQL ryšio testas</h1>
+    <div class="topbar">
+        <span class="language-label"><?= htmlspecialchars(translate('language'), ENT_QUOTES, 'UTF-8') ?>:</span>
+        <div class="language-switcher" aria-label="<?= htmlspecialchars(translate('language'), ENT_QUOTES, 'UTF-8') ?>">
+            <button class="language-button<?= $language === 'lt' ? ' active' : '' ?>" type="button" data-language="lt" aria-pressed="<?= $language === 'lt' ? 'true' : 'false' ?>">LT</button>
+            <button class="language-button<?= $language === 'en' ? ' active' : '' ?>" type="button" data-language="en" aria-pressed="<?= $language === 'en' ? 'true' : 'false' ?>">EN</button>
+        </div>
+    </div>
+
+    <h1><?= htmlspecialchars(translate('page_title'), ENT_QUOTES, 'UTF-8') ?></h1>
 
     <section class="card">
-        <h2>WEB užklausa</h2>
+        <h2><?= htmlspecialchars(translate('web_request'), ENT_QUOTES, 'UTF-8') ?></h2>
         <dl>
-            <dt>Serveris / host'as</dt>
+            <dt><?= htmlspecialchars(translate('server_host'), ENT_QUOTES, 'UTF-8') ?></dt>
             <dd><?= htmlspecialchars($webServer, ENT_QUOTES, 'UTF-8') ?></dd>
-            <dt>Dabartinė data ir laikas</dt>
+            <dt><?= htmlspecialchars(translate('current_datetime'), ENT_QUOTES, 'UTF-8') ?></dt>
             <dd><?= htmlspecialchars($now->format('Y-m-d H:i:s T'), ENT_QUOTES, 'UTF-8') ?></dd>
         </dl>
     </section>
 
     <section class="card">
-        <h2>PostgreSQL prisijungimas</h2>
-        <?php if ($databaseStatus === 'OK'): ?>
+        <h2><?= htmlspecialchars(translate('postgres_connection'), ENT_QUOTES, 'UTF-8') ?></h2>
+        <?php if ($databaseConnected): ?>
             <p class="status ok">✓ OK</p>
             <dl>
-                <dt>Paskutinis įrašas į DB</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
-                <dt>DB node</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
-                <dt>PostgreSQL server hostname</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('last_db_entry'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? translate('no_data'), ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('db_node'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? translate('not_specified'), ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('postgres_hostname'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? translate('not_specified'), ENT_QUOTES, 'UTF-8') ?></dd>
             </dl>
-            <p class="hint">Prisijungta ir užklausa įrašyta į DB.</p>
+            <p class="hint"><?= htmlspecialchars(translate('connected_and_logged'), ENT_QUOTES, 'UTF-8') ?></p>
         <?php else: ?>
-            <p class="status error">✗ Nepavyko prisijungti</p>
+            <p class="status error">✗ <?= htmlspecialchars(translate('connection_failed'), ENT_QUOTES, 'UTF-8') ?></p>
             <dl>
-                <dt>Paskutinis įrašas į DB</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? 'Nėra duomenų', ENT_QUOTES, 'UTF-8') ?></dd>
-                <dt>DB node</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
-                <dt>PostgreSQL server hostname</dt>
-                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? 'Nenurodyta', ENT_QUOTES, 'UTF-8') ?></dd>
-                <dt>Klaida</dt>
-                <dd class="error"><?= htmlspecialchars($databaseError ?? 'Nežinoma klaida', ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('last_db_entry'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['at'] ?? translate('no_data'), ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('db_node'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['node'] ?? translate('not_specified'), ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('postgres_hostname'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd><?= htmlspecialchars($lastDbInsert['hostname'] ?? translate('not_specified'), ENT_QUOTES, 'UTF-8') ?></dd>
+                <dt><?= htmlspecialchars(translate('error'), ENT_QUOTES, 'UTF-8') ?></dt>
+                <dd class="error"><?= htmlspecialchars($databaseError ?? translate('unknown_error'), ENT_QUOTES, 'UTF-8') ?></dd>
             </dl>
         <?php endif; ?>
     </section>
 
     <?php if ($storageError !== null): ?>
         <section class="card">
-            <h2>Paskutinio prisijungimo failas</h2>
-            <p class="status error">✗ Nepavyko atidaryti `last-db-success.json`</p>
+            <h2><?= htmlspecialchars(translate('last_connection_file'), ENT_QUOTES, 'UTF-8') ?></h2>
+            <p class="status error">✗ <?= htmlspecialchars(translate('file_open_failed'), ENT_QUOTES, 'UTF-8') ?></p>
             <p class="error"><?= htmlspecialchars($storageError, ENT_QUOTES, 'UTF-8') ?></p>
         </section>
     <?php endif; ?>
+
+    <script>
+        (() => {
+            const storageKey = 'webDbPlayLanguage';
+            const serverLanguage = <?= json_encode($language, JSON_THROW_ON_ERROR) ?>;
+            const supportedLanguages = ['lt', 'en'];
+            const savedLanguage = window.localStorage.getItem(storageKey);
+
+            function rememberLanguage(language) {
+                window.localStorage.setItem(storageKey, language);
+                document.cookie = `site_language=${language}; path=/; max-age=31536000; samesite=lax`;
+            }
+
+            if (supportedLanguages.includes(savedLanguage) && savedLanguage !== serverLanguage) {
+                rememberLanguage(savedLanguage);
+                window.location.reload();
+                return;
+            }
+
+            document.querySelectorAll('[data-language]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const language = button.dataset.language;
+                    if (supportedLanguages.includes(language) && language !== serverLanguage) {
+                        rememberLanguage(language);
+                        window.location.reload();
+                    }
+                });
+            });
+
+            if (supportedLanguages.includes(serverLanguage) && savedLanguage !== serverLanguage) {
+                window.localStorage.setItem(storageKey, serverLanguage);
+            }
+        })();
+    </script>
 </body>
 </html>
